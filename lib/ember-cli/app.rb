@@ -25,7 +25,7 @@ module EmberCLI
       # @pid = exec(cmd, method: :spawn)
       @pid = exec command
       copy_ember_assets_to_rails
-      add_fingerprinted_ember_assets_to_manifest unless Helpers.non_production?
+      # add_fingerprinted_ember_assets_to_manifest unless Helpers.non_production?
       at_exit{ stop }
     end
 
@@ -35,11 +35,11 @@ module EmberCLI
     end
 
     def exposed_js_assets
-      %W[#{name}/vendor #{name}/#{ember_app_name}]
+      %W[vendor #{ember_app_name}]
     end
 
     def exposed_css_assets
-      %W[#{name}/vendor #{name}/#{ember_app_name}]
+      %W[vendor #{ember_app_name}]
     end
 
     def wait
@@ -178,30 +178,38 @@ module EmberCLI
     end
 
     def add_fingerprinted_ember_assets_to_manifest
+      puts "** Mering manifests **"
       rails_assets_path = [Rails.root, 'public', 'assets'].join('/')
 
-      fingerprints = {}
-      Dir["#{rails_assets_path}/*"].map{|path| File.basename(path)}.each do |fn|
-        fingerprints[:app_js] = fn if fn.index("#{ember_app_name}-") == 0 && File.extname(fn) == '.js'
-        fingerprints[:app_css] = fn if fn.index("#{ember_app_name}-") == 0 && File.extname(fn) == '.css'
-        fingerprints[:vendor_js] = fn if fn.index("vendor-") == 0 && File.extname(fn) == '.js'
-        fingerprints[:vendor_css] = fn if fn.index("vendor-") == 0 && File.extname(fn) == '.css'
-        fingerprints[:manifest_json] = fn if fn.index("manifest-") == 0 && File.extname(fn) == '.json'
+      manifests = []
+      Dir["#{rails_assets_path}/*"].each do |path|
+        fn = File.basename(path)
+        if fn.index("manifest-") == 0 && File.extname(fn) == '.json'
+          manifests << path
+        end
       end
-      fingerprints[:manifest_json_path] = [rails_assets_path, fingerprints[:manifest_json]].join('/')
-      manifest = JSON.parse(File.open(fingerprints[:manifest_json_path]).read)
 
-      manifest['assets']["#{name}/#{ember_app_name}.js"] = fingerprints[:app_js]
-      manifest['assets']["#{name}/#{ember_app_name}.css"] = fingerprints[:app_css]
-      manifest['assets']["#{name}/vendor.js"] = fingerprints[:vendor_js]
-      manifest['assets']["#{name}/vendor.css"] = fingerprints[:vendor_css]
+      Dir["#{[rails_assets_path, name].join('/')}/*"].each do |path|
+        fn = File.basename(path)
+        if fn.index("manifest-") == 0 && File.extname(fn) == '.json'
+          manifests << path
+        end
+      end
 
-      puts "Updating manifest.json with fingerprints:"
-      puts "#{fingerprints.to_json}"
+      puts "** Found #{manifests.count} manifests **"
 
-      File.open(fingerprints[:manifest_json_path],"w") do |f|
+
+      manifest = JSON.parse(File.open(manifests[0]).read)
+      manifests.each_with_index do |manifest_path, index|
+        next if index == 0
+        manifest.deep_merge! JSON.parse(File.open(manifest_path).read)
+        File.delete(manifest_path)
+      end
+
+      File.open(manifests[0],"w") do |f|
         f.write(manifest.to_json)
       end
+
     end
 
     def log_pipe
