@@ -21,10 +21,10 @@ module EmberCLI
 
     def run
       prepare
-      # cmd = command(watch: true)
-      # @pid = exec(cmd, method: :spawn)
-      @pid = exec command
-      copy_ember_assets_to_rails
+      cmd = command(watch: true)
+      @pid = exec(cmd, method: :spawn)
+      # @pid = exec command
+      # copy_ember_assets_to_rails
       # add_fingerprinted_ember_assets_to_manifest unless Helpers.non_production?
       at_exit{ stop }
     end
