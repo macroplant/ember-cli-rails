@@ -14,9 +14,5 @@ module EmberCLI
       EmberCLI.enable! unless ENV["SKIP_EMBER"]
     end
 
-    rake_tasks do
-      require "sprockets/rails/task"
-      Helpers.override_assets_precompile_task!
-    end
   end
 end
