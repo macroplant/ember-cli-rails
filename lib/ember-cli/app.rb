@@ -23,9 +23,6 @@ module EmberCLI
       prepare
       cmd = command(watch: true)
       @pid = exec(cmd, method: :spawn)
-      # @pid = exec command
-      # copy_ember_assets_to_rails
-      # add_fingerprinted_ember_assets_to_manifest unless Helpers.non_production?
       at_exit{ stop }
     end
 
@@ -209,6 +206,8 @@ module EmberCLI
       File.open(manifests[0],"w") do |f|
         f.write(manifest.to_json)
       end
+
+      AssetManifest.create(name:File.basename(manifests[0]))
 
     end
 
