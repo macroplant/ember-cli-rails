@@ -15,8 +15,6 @@ module EmberCLI
     def compile
       prepare
       silence_stream(STDOUT){ exec command }
-      copy_ember_assets_to_rails
-      add_fingerprinted_ember_assets_to_manifest unless Helpers.non_production?
     end
 
     def run
@@ -154,61 +152,6 @@ module EmberCLI
     def command(options={})
       watch = options[:watch] ? "--watch" : ""
       "#{ember_path} build #{watch} --environment #{environment} --output-path #{dist_path} #{log_pipe}"
-    end
-
-    def copy_ember_assets_to_rails
-
-      ember_assets_path = [EmberCLI.root, 'apps', name, 'assets', '.'].join('/')
-      ember_fonts_path = [EmberCLI.root, 'apps', name, 'fonts'].join('/')
-      rails_assets_path = [Rails.root, 'public', 'assets'].join('/')
-      rails_fonts_path = [Rails.root, 'public'].join('/')
-
-      puts "Copying Ember dist/assets into rails public/assets..."
-      puts "#{ember_assets_path} \n--> #{rails_assets_path}"
-      FileUtils.cp_r(ember_assets_path, rails_assets_path)
-
-      if File.directory?(ember_fonts_path)
-        puts "Copying Ember dist/fonts into rails public/fonts..."
-        puts "#{ember_fonts_path} \n--> #{rails_fonts_path}"
-        FileUtils.cp_r(ember_fonts_path, rails_fonts_path)
-      end
-    end
-
-    def add_fingerprinted_ember_assets_to_manifest
-      puts "** Mering manifests **"
-      rails_assets_path = [Rails.root, 'public', 'assets'].join('/')
-
-      manifests = []
-      Dir["#{rails_assets_path}/*"].each do |path|
-        fn = File.basename(path)
-        if fn.index("manifest-") == 0 && File.extname(fn) == '.json'
-          manifests << path
-        end
-      end
-
-      Dir["#{[rails_assets_path, name].join('/')}/*"].each do |path|
-        fn = File.basename(path)
-        if fn.index("manifest-") == 0 && File.extname(fn) == '.json'
-          manifests << path
-        end
-      end
-
-      puts "** Found #{manifests.count} manifests **"
-
-
-      manifest = JSON.parse(File.open(manifests[0]).read)
-      manifests.each_with_index do |manifest_path, index|
-        next if index == 0
-        manifest.deep_merge! JSON.parse(File.open(manifest_path).read)
-        File.delete(manifest_path)
-      end
-
-      File.open(manifests[0],"w") do |f|
-        f.write(manifest.to_json)
-      end
-
-      AssetManifest.create(name:File.basename(manifests[0]))
-
     end
 
     def log_pipe
