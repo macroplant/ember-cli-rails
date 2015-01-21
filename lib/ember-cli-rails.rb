@@ -21,7 +21,7 @@ module EmberCLI
     @prepared ||= begin
       # todo - make this work with apps other than just 'frontend'
       # configuration.apps.each{ |name, app| Rails.configuration.assets.paths << root.join("assets/#{name}").to_s }
-      Rails.configuration.assets.paths << root.join("assets/frontend").to_s
+      Rails.configuration.assets.paths << root.join("apps/frontend/assets").to_s
       at_exit{ cleanup }
       true
     end
