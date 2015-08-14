@@ -17,10 +17,19 @@ module EmberCLI
       @tee_path = Helpers.which("tee")
     end
 
+    def npm_path
+      @npm_path ||= Helpers.which("npm")
+    end
+
+    def bundler_path
+      @bundler_path ||= Helpers.which("bundler")
+    end
+
     def build_timeout
       @build_timeout ||= 5
     end
 
     attr_writer :build_timeout
+    attr_accessor :watcher
   end
 end
