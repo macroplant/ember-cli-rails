@@ -5,7 +5,9 @@ module EmberCLI
     end
 
     def call(env)
-      path = env["PATH_INFO"].to_s
+      enable_ember_cli
+      EmberCLI.wait!
+
       @app.call(env)
     end
 
@@ -20,11 +22,6 @@ module EmberCLI
         end
 
         true
-      if path == "/testem.js"
-        [ 200, { "Content-Type" => "text/javascript" }, [""] ]
-      else
-        EmberCLI.process_path path
-        @app.call(env)
       end
     end
   end

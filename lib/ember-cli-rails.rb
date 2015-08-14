@@ -1,14 +1,13 @@
-require "ember-cli/engine" if defined?(Rails)
+require "ember-cli/railtie" if defined?(Rails)
 
 module EmberCLI
   extend self
 
   autoload :App,           "ember-cli/app"
   autoload :Configuration, "ember-cli/configuration"
+  autoload :ViewHelpers,   "ember-cli/view_helpers"
   autoload :Helpers,       "ember-cli/helpers"
   autoload :Middleware,    "ember-cli/middleware"
-  autoload :PathSet,       "ember-cli/path_set"
-  autoload :Runner,        "ember-cli/runner"
 
   def configure
     yield configuration
@@ -16,18 +15,6 @@ module EmberCLI
 
   def configuration
     Configuration.instance
-  end
-
-  def app(name)
-    apps.fetch(name) do
-      fail KeyError, "#{name.inspect} app is not defined"
-    end
-  end
-
-  alias_method :[], :app
-
-  def skip?
-    ENV["SKIP_EMBER"].present?
   end
 
   def prepare!
@@ -42,17 +29,15 @@ module EmberCLI
 
   def enable!
     prepare!
-    append_middleware unless env.production?
+
+    if Helpers.non_production?
+      Rails.configuration.middleware.use Middleware
+    end
   end
 
-  def install_dependencies!
+  def run!
     prepare!
-    each_app &:install_dependencies
-  end
-
-  def run_tests!
-    prepare!
-    each_app &:run_tests
+    each_app &:run
   end
 
   def compile!
@@ -60,19 +45,17 @@ module EmberCLI
     each_app &:compile
   end
 
-  def process_path(path)
-    each_app{ |app| Runner.new(app, path).process }
+  def stop!
+    each_app &:stop
+  end
+
+  def wait!
+    each_app &:wait
   end
 
   def root
     @root ||= Rails.root.join("tmp", "ember-cli-#{uid}")
   end
-
-  def env
-    @env ||= Helpers.current_environment.inquiry
-  end
-
-  delegate :apps, to: :configuration
 
   private
 
@@ -85,10 +68,6 @@ module EmberCLI
   end
 
   def each_app
-    apps.each{ |name, app| yield app }
-  end
-
-  def append_middleware
-    Rails.configuration.middleware.use Middleware
+    configuration.apps.each{ |name, app| yield app }
   end
 end

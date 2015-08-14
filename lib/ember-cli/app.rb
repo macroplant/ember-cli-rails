@@ -2,50 +2,30 @@ require "timeout"
 
 module EmberCLI
   class App
-    ADDON_VERSION = "0.0.12"
-    EMBER_CLI_VERSIONS = [ "~> 0.1.5", "~> 0.2.0", "~> 1.13" ]
+    ADDON_VERSION = "0.0.7"
+    EMBER_CLI_VERSION = "~> 0.1.3"
+    JQUERY_VERSIONS = ["~> 1.7", "~> 2.1"].freeze
 
-    class BuildError < StandardError; end
-
-    attr_reader :name, :options, :paths, :pid
-
-    delegate :root, to: :paths
+    attr_reader :name, :options, :pid
 
     def initialize(name, options={})
       @name, @options = name.to_s, options
-      @paths = PathSet.new(self)
     end
 
     def compile
-      @compiled ||= begin
-        prepare
-        silence_build{ exec command }
-        check_for_build_error!
-        true
-      end
-    end
-
-    def install_dependencies
-      exec "#{bundler_path} install" if gemfile_path.exist?
-      exec "#{npm_path} install"
+      prepare
+      silence_stream(STDOUT){ exec command }
     end
 
     def run
       prepare
-      FileUtils.touch lockfile_path
       cmd = command(watch: true)
       @pid = exec(cmd, method: :spawn)
-      Process.detach pid
-      set_on_exit_callback
-    end
-
-    def run_tests
-      prepare
-      exit 1 unless exec("#{ember_path} test")
+      at_exit{ stop }
     end
 
     def stop
-      Process.kill :INT, pid if pid
+      Process.kill "INT", pid if pid && pid.is_a?(Integer)
       @pid = nil
     end
 
@@ -59,7 +39,7 @@ module EmberCLI
 
     def wait
       Timeout.timeout(build_timeout) do
-        wait_for_build_complete_or_error
+        sleep 0.1 while lockfile.exist?
       end
     rescue Timeout::Error
       suggested_timeout = build_timeout + 5
@@ -87,87 +67,56 @@ module EmberCLI
       MSG
     end
 
-    def method_missing(method_name, *)
-      if path_method = supported_path_method(method_name)
-        paths.public_send(path_method)
-      else
-        super
-      end
-    end
-
-    def respond_to_missing?(method_name, *)
-      if supported_path_method(method_name)
-        true
-      else
-        super
+    def ember_path
+      @ember_path ||= app_path.join("node_modules", ".bin", "ember").tap do |path|
+        fail <<-MSG.strip_heredoc unless path.executable?
+          No local ember executable found. You should run `npm install`
+          inside the #{name} app located at #{app_path}
+        MSG
       end
     end
 
     private
 
-    def set_on_exit_callback
-      @on_exit_callback ||= at_exit{ stop }
-    end
-
-    def supported_path_method(original)
-      path_method = original.to_s[/\A(.+)_path\z/, 1]
-      path_method if path_method && paths.respond_to?(path_method)
-    end
-
-    def silence_build(&block)
-      if ENV.fetch("EMBER_CLI_RAILS_VERBOSE"){ EmberCLI.env.production? }
-        yield
-      else
-        silence_stream STDOUT, &block
-      end
-    end
+    delegate :match_version?, :non_production?, to: Helpers
+    delegate :tee_path, to: :configuration
+    delegate :configuration, to: :EmberCLI
 
     def build_timeout
-      options.fetch(:build_timeout){ EmberCLI.configuration.build_timeout }
+      options.fetch(:build_timeout){ configuration.build_timeout }
     end
 
-    def watcher
-      options.fetch(:watcher){ EmberCLI.configuration.watcher }
-    end
-
-    def check_for_build_error!
-      raise_build_error! if build_error?
-    end
-
-    def reset_build_error!
-      build_error_file_path.delete if build_error?
-    end
-
-    def build_error?
-      build_error_file_path.exist?
-    end
-
-    def raise_build_error!
-      error = BuildError.new("EmberCLI app #{name.inspect} has failed to build")
-      error.set_backtrace build_error_file_path.read.split(?\n)
-      fail error
+    def lockfile
+      tmp_path.join("build.lock")
     end
 
     def prepare
       @prepared ||= begin
         check_addon!
         check_ember_cli_version!
-        reset_build_error!
+        FileUtils.touch lockfile
         symlink_to_assets_root
         add_assets_to_precompile_list
         true
       end
     end
 
-    def check_ember_cli_version!
-      version = dev_dependencies.fetch("ember-cli").split(?-).first
+    def suppress_jquery?
+      return false unless defined?(Jquery::Rails::JQUERY_VERSION)
 
-      unless Helpers.match_version?(version, EMBER_CLI_VERSIONS)
+      JQUERY_VERSIONS.any? do |requirement|
+        match_version?(Jquery::Rails::JQUERY_VERSION, requirement)
+      end
+    end
+
+    def check_ember_cli_version!
+      version = dev_dependencies.fetch("ember-cli").split("-").first
+
+      unless match_version?(version, EMBER_CLI_VERSION)
         fail <<-MSG.strip_heredoc
           EmberCLI Rails require ember-cli NPM package version to be
-          #{EMBER_CLI_VERSIONS.last} to work properly (you have #{version}).
-          From within your EmberCLI directory please update your package.json
-          accordingly and run:
+          #{EMBER_CLI_VERSION} to work properly. From within your EmberCLI directory
+          please update your package.json accordingly and run:
 
             $ npm install
 
@@ -184,7 +133,7 @@ module EmberCLI
 
             $ npm install --save-dev ember-cli-rails-addon@#{ADDON_VERSION}
 
-          in your Ember application root: #{root}
+          in you Ember application root: #{app_path}
         MSG
       end
     end
@@ -197,16 +146,11 @@ module EmberCLI
     end
 
     def add_assets_to_precompile_list
-      Rails.configuration.assets.precompile << /\A#{name}\//
+      Rails.configuration.assets.precompile << /(?:\/|\A)#{name}\//
     end
 
     def command(options={})
-      watch = ""
-      if options[:watch]
-        watch = "--watch"
-        watch += " --watcher #{watcher}" if watcher
-      end
-
+      watch = options[:watch] ? "--watch" : ""
       "#{ember_path} build #{watch} --environment #{environment} --output-path #{dist_path} #{log_pipe}"
     end
 
@@ -218,12 +162,39 @@ module EmberCLI
       @ember_app_name ||= options.fetch(:name){ package_json.fetch(:name) }
     end
 
+    def app_path
+      @app_path ||= begin
+        path = options.fetch(:path){ Rails.root.join("app", name) }
+        Pathname.new(path)
+      end
+    end
+
+    def tmp_path
+      @tmp_path ||= begin
+        path = app_path.join("tmp")
+        path.mkdir unless path.exist?
+        path
+      end
+    end
+
+    def log_path
+      Rails.root.join("log", "ember-#{name}.#{Rails.env}.log")
+    end
+
+    def dist_path
+      @dist_path ||= EmberCLI.root.join("apps", name).tap(&:mkpath)
+    end
+
+    def assets_path
+      @assets_path ||= EmberCLI.root.join("assets").tap(&:mkpath)
+    end
+
     def environment
-      EmberCLI.env.production?? "production" : "development"
+      non_production?? "development" : "production"
     end
 
     def package_json
-      @package_json ||= JSON.parse(package_json_file_path.read).with_indifferent_access
+      @package_json ||= JSON.parse(app_path.join("package.json").read).with_indifferent_access
     end
 
     def dev_dependencies
@@ -232,35 +203,21 @@ module EmberCLI
 
     def addon_present?
       dev_dependencies["ember-cli-rails-addon"] == ADDON_VERSION &&
-        addon_package_json_file_path.exist?
-    end
-
-    def excluded_ember_deps
-      Array.wrap(options[:exclude_ember_deps]).join(?,)
+        app_path.join("node_modules", "ember-cli-rails-addon", "package.json").exist?
     end
 
     def env_hash
-      ENV.to_h.tap do |vars|
-        vars["RAILS_ENV"] = Rails.env
-        # vars["DISABLE_FINGERPRINTING"] = "true"
-        vars["EXCLUDE_EMBER_ASSETS"] = excluded_ember_deps
-        vars["BUNDLE_GEMFILE"] = gemfile_path.to_s if gemfile_path.exist?
+      ENV.clone.tap do |vars|
+        # vars.store "DISABLE_FINGERPRINTING", "true"
+        # vars.store "SUPPRESS_JQUERY", "true" if suppress_jquery?
       end
     end
 
     def exec(cmd, options={})
       method_name = options.fetch(:method, :system)
 
-      Dir.chdir root do
+      Dir.chdir app_path do
         Kernel.public_send(method_name, env_hash, cmd, err: :out)
-      end
-    end
-
-    def wait_for_build_complete_or_error
-      loop do
-        check_for_build_error!
-        break unless lockfile_path.exist?
-        sleep 0.1
       end
     end
   end
