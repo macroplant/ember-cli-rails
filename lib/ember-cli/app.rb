@@ -3,7 +3,7 @@ require "timeout"
 module EmberCLI
   class App
     ADDON_VERSION = "0.0.7"
-    EMBER_CLI_VERSION = "~> 0.1.3"
+    EMBER_CLI_VERSION = ">=0.1.3"
     JQUERY_VERSIONS = ["~> 1.7", "~> 2.1"].freeze
 
     attr_reader :name, :options, :pid
